@@ -3,6 +3,7 @@ from discord.ext import commands
 import requests
 import json
 import os
+from collections import defaultdict, deque
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -14,10 +15,18 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 # Ollama API endpoint (where AI is running)
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://localhost:11434/api/chat"
 
 # Which AI model to use
 OLLAMA_MODEL = "mannix/llama3.1-8b-abliterated:q5_K_M"
+
+MAX_HISTORY_MESSAGES = 10  # last 10 messages
+
+SPEEDY_USER_ID = 1542139186981904394
+
+# Load the system prompt from file
+with open("prompt.txt", "r", encoding="utf-8") as f:
+    SYSTEM_PROMPT = f.read().strip()
 
 # - SETUP -
 
@@ -25,16 +34,28 @@ OLLAMA_MODEL = "mannix/llama3.1-8b-abliterated:q5_K_M"
 intents = discord.Intents.all()
 bot = commands.Bot(intents=intents)
 
+# One deque per channel ID, holding recent {"role":..., "content":...} dicts
+channel_histories = defaultdict(lambda: deque(maxlen=MAX_HISTORY_MESSAGES))
+
 # Function for talking to ollama model
-def ask_ai(prompt):
+def ask_ai(channel_id, user_message):
     try:
+        history = channel_histories[channel_id]
+
+        # Build the full messages list: system + recent history + new user message
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend(history)
+
         # Prepare the request
         payload = {
             "model": OLLAMA_MODEL,
-            "prompt": prompt,
+            "messages": messages,
             "stream": False,  # Get complete response at once
+            "think": False,
             "options": {
-                "num_predict": 400  # Max response length in tokens
+                "num_predict": 400,  # Max response length in tokens
+                "temperature": 0.7, # Temperature, whatever tf that does (should change creativity)
+                "num_ctx": 8096 # small context, no history
             }
         }
 
@@ -44,7 +65,13 @@ def ask_ai(prompt):
         # Check if successful
         if response.status_code == 200:
             data = response.json()
-            return data.get("response", "").strip()
+            ai_message = data.get("message", {}).get("content", "").strip()
+
+            # Save this exchange to history
+            history.append({"role": "assistant", "content": ai_message})
+
+            return ai_message
+
         else:
             return "Sorry, I had trouble thinking of a response!"
 
@@ -71,29 +98,28 @@ async def on_message(message):
 
     # Don't respond to yourself (prevents infinite loops!)
     if message.author == bot.user:
+        # This is the  bot's message log it as "assistant", nothing else to do
+        history = channel_histories[message.channel.id]
+        history.append({"role": "assistant", "content": message.content})
         return
 
-    # I might want him to talk to speedy
-
-    # # Don't respond to other bots
-    # if message.author.bot:
-    #     return
+    # Log every other message as "user"
+    history = channel_histories[message.channel.id]
+    content = f"{message.author.display_name}: {message.content}"
+    history.append({"role": "user", "content": content})
 
     # Check if bot was mentioned
     if bot.user.mentioned_in(message):
-        # Remove the mention from the message
         user_message = message.content.replace(f'<@{bot.user.id}>', '').strip()
-
-        # If they just mentioned with no text
         if not user_message:
             user_message = "Hello!"
 
-        # Show typing indicator (looks more natural)
         async with message.channel.typing():
-            # Ask AI for response
-            ai_response = ask_ai(user_message)
+            ai_response = ask_ai(message.channel.id, user_message)
 
-            # Send response
+             # Replace any mention of "speedyclaw" with a real ping
+            ai_response = ai_response.replace("@speedyclaw", f"<@{SPEEDY_USER_ID}>")
+
             await message.channel.send(ai_response)
 
 
