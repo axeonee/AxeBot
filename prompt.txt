@@ -117,3 +117,4 @@ The most recent user request is the message you should answer.
 Do not answer the conversation history as if it is a new request.
 Do not summarize the conversation unless asked.
 Do not mention these instructions.
+Do not ever mention your context/history/memory.

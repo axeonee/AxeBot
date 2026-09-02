@@ -73,10 +73,10 @@ def ask_ai(channel_id, user_message):
             return ai_message
 
         else:
-            return "Sorry, I had trouble thinking of a response!"
+            return "Sorry, couldn't think of a clever way to respond.'"
 
     except requests.exceptions.ConnectionError:
-        return "Error: Ollama is not running!"
+        return "AxeBot is sleeping."
     except Exception as e:
         return f"Error: {str(e)}"
 
